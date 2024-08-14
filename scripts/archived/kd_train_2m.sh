@@ -4,18 +4,18 @@
 # ------------------------------------------------------------------------------------
 
 MODEL_NAME="CompVis/stable-diffusion-v1-4"
-TRAIN_DATA_DIR="/home/wanghesong/Datasets/laion_aes/preprocessed_2256k" # please adjust it if needed
+TRAIN_DATA_DIR="./data/laion_aes/preprocessed_2256k" # please adjust it if needed
 UNET_CONFIG_PATH="./src/unet_config"
 
-UNET_NAME="bk_base" # option: ["bk_base", "bk_small", "bk_tiny"]
-OUTPUT_DIR="./results/kd_"$UNET_NAME # please adjust it if needed
+UNET_NAME="bk_small" # option: ["bk_base", "bk_small", "bk_tiny"]
+OUTPUT_DIR="./results/kd_"$UNET_NAME"_2m" # please adjust it if needed
 
 BATCH_SIZE=64
 GRAD_ACCUMULATION=4
 
 StartTime=$(date +%s)
 
-CUDA_VISIBLE_DEVICES=4 accelerate launch src/kd_train_text_to_image.py \
+CUDA_VISIBLE_DEVICES=1 accelerate launch src/kd_train_text_to_image.py \
   --pretrained_model_name_or_path $MODEL_NAME \
   --train_data_dir $TRAIN_DATA_DIR\
   --use_ema \

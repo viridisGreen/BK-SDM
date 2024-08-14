@@ -1,3 +1,4 @@
+# region-comments
 # ------------------------------------------------------------------------------------
 # Copyright 2023. Nota Inc. All Rights Reserved.
 # Code modified from https://github.com/huggingface/diffusers/blob/v0.15.0/examples/text_to_image/train_text_to_image.py
@@ -16,6 +17,11 @@
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
+# endregion-comments
+
+# region-imports
+import os
+os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 
 import argparse
 import logging
@@ -58,7 +64,9 @@ try:
     has_wandb = True
 except:
     has_wandb = False
+# endregion-imports
 
+# region-out_of_main
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.15.0")
 
@@ -75,8 +83,10 @@ def add_hook(net, mem, mapping_layers):
         if n in mapping_layers:
             m.register_forward_hook(get_activation(mem, n))
 
+#todo 返回继承了参数但未经过剪枝的学生模型
 def copy_weight_from_teacher(unet_stu, unet_tea, student_type):
 
+    #* 首先定义一个字典，用于存储stu和tea之间的映射关系
     connect_info = {} # connect_info['TO-student'] = 'FROM-teacher'
     if student_type in ["bk_base", "bk_small"]:
         connect_info['up_blocks.0.resnets.1.'] = 'up_blocks.0.resnets.2.'
@@ -105,20 +115,20 @@ def copy_weight_from_teacher(unet_stu, unet_tea, student_type):
         raise NotImplementedError
 
 
-    for k in unet_stu.state_dict().keys():
-        flag = 0
-        k_orig = k
-        for prefix_key in connect_info.keys():
-            if k.startswith(prefix_key):
+    for k in unet_stu.state_dict().keys(): #* 变量模型所有参数（的key）, .state_dict(): 返回模型的状态字典，包含了模型所有参数的名称和值
+        flag = 0 #* 标志变量，用于指示当前键是否需要强制复制
+        k_orig = k #* 初始的键名，用于在需要时替换前缀
+        for prefix_key in connect_info.keys(): #* 遍历需要被复制的参数
+            if k.startswith(prefix_key): #* 判断当前参数是否需要继承teacher model
                 flag = 1
-                k_orig = k_orig.replace(prefix_key, connect_info[prefix_key])            
+                k_orig = k_orig.replace(prefix_key, connect_info[prefix_key]) #* 替换前缀, str.replace(old, new)         
                 break
 
         if flag == 1:
             print(f"** forced COPY {k_orig} -> {k}")
         else:
             print(f"normal COPY {k_orig} -> {k}")
-        unet_stu.state_dict()[k].copy_(unet_tea.state_dict()[k_orig])
+        unet_stu.state_dict()[k].copy_(unet_tea.state_dict()[k_orig]) #* copy_(): 将一个张量的值复制到另一个张量中
 
     return unet_stu
 
@@ -361,25 +371,30 @@ def parse_args():
         args.non_ema_revision = args.revision
 
     return args
-
+# endregion-out_of_main
 
 def main():
+    import ipdb
+    # ipdb.set_trace()
     args = parse_args()
 
+    #* 处理过时的配置
     if args.non_ema_revision is not None:
         deprecate(
-            "non_ema_revision!=None",
-            "0.15.0",
-            message=(
+            "non_ema_revision!=None", #* condition: 表达弃用条件的字符串
+            "0.15.0", #* version: 弃用生效的版本
+            message=( #* message: 弃用警告的信息
                 "Downloading 'non_ema' weights from revision branches of the Hub is deprecated. Please make sure to"
                 " use `--variant=non_ema` instead."
             ),
         )
     logging_dir = os.path.join(args.output_dir, args.logging_dir)
 
+    #* 创建一个ProjCfg类，设置最大ckpt数量，多了会删除最前的
+    #* 与Accelerator配合使用：在后续代码中，这个配置对象将传递给 Accelerator，用于管理训练过程中的检查点保存和删除
     accelerator_project_config = ProjectConfiguration(total_limit=args.checkpoints_total_limit)
 
-    accelerator = Accelerator(
+    accelerator = Accelerator( #* Acc类：提供了简化和加速分布式训练和混合精度训练的功能
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         mixed_precision=args.mixed_precision,
         log_with=args.report_to,
@@ -393,8 +408,8 @@ def main():
 
 
     csv_log_path = os.path.join(args.output_dir, 'log_loss.csv')
-    print(csv_log_path)
-    if not os.path.exists(csv_log_path):
+    # print(csv_log_path)
+    if not os.path.exists(csv_log_path): #* 如果是第一次创建，写入表头
         with open(csv_log_path, 'w') as logfile:
             logwriter = csv.writer(logfile, delimiter=',')
             logwriter.writerow(['epoch', 'step', 'global_step',
@@ -407,12 +422,13 @@ def main():
         datefmt="%m/%d/%Y %H:%M:%S",
         level=logging.INFO,
     )
-    logger.info(accelerator.state, main_process_only=False)
+    logger.info(accelerator.state, main_process_only=False) #* 记录有关分布式训练的信息
+    #* 根据当前进程是否为本地主进程（local main process），设置不同库的日志详细程度
     if accelerator.is_local_main_process:
         datasets.utils.logging.set_verbosity_warning()
         transformers.utils.logging.set_verbosity_warning()
         diffusers.utils.logging.set_verbosity_info()
-    else:
+    else: #* 如果不是本地主进程，只有error及以上才会被汇报
         datasets.utils.logging.set_verbosity_error()
         transformers.utils.logging.set_verbosity_error()
         diffusers.utils.logging.set_verbosity_error()
@@ -422,29 +438,37 @@ def main():
         set_seed(args.seed)
 
     # Handle the repository creation
-    if accelerator.is_main_process and (args.output_dir is not None):
+    #* 在分布式训练环境中，仅在主进程中创建输出目录; 避免多个进程同时创建同一目录，导致冲突或冗余操作
+    if accelerator.is_main_process and (args.output_dir is not None): #* 主进程 & 指定了输出目录
         os.makedirs(args.output_dir, exist_ok=True)
 
     # Load scheduler, tokenizer and models.
-    noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
+    #* 加载模型预设好的部分，revision是指定模型的版本或修订版
+    noise_scheduler = DDPMScheduler.from_pretrained(
+        args.pretrained_model_name_or_path, subfolder="scheduler"
+    )
     tokenizer = CLIPTokenizer.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="tokenizer", revision=args.revision
     )
     text_encoder = CLIPTextModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision
     )
-    vae = AutoencoderKL.from_pretrained(args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision)
+    vae = AutoencoderKL.from_pretrained(
+        args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision
+    )
 
     # Define teacher and student
     unet_teacher = UNet2DConditionModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.non_ema_revision
     )
 
+    #* load_config(path): 把配置文件保存到path里面
     config_student = UNet2DConditionModel.load_config(args.unet_config_path, subfolder=args.unet_config_name)
+    #* 根据配置创建一个 UNet2DConditionModel 模型实例
     unet = UNet2DConditionModel.from_config(config_student, revision=args.non_ema_revision)
 
     # Copy weights from teacher to student
-    if args.use_copy_weight_from_teacher:
+    if args.use_copy_weight_from_teacher: #* 使unet继承了unet_teacher的权重，nothing more
         copy_weight_from_teacher(unet, unet_teacher, args.unet_config_name)
    
 
@@ -455,9 +479,12 @@ def main():
 
     # Create EMA for the unet.
     if args.use_ema:
-        ema_unet = UNet2DConditionModel.from_config(config_student, revision=args.revision)
+        #* 和前面的unet相同，除了revision
+        ema_unet = UNet2DConditionModel.from_config(config_student, revision=args.revision) 
+        #* 将unet模型包装到EMAModel中，并指定模型的类和配置
         ema_unet = EMAModel(ema_unet.parameters(), model_cls=UNet2DConditionModel, model_config=ema_unet.config)
 
+    #* 如果可以的话，使用xFormer加速运算
     if args.enable_xformers_memory_efficient_attention:
         if is_xformers_available():
             import xformers
@@ -474,16 +501,19 @@ def main():
     # `accelerate` 0.16.0 will have better support for customized saving
     if version.parse(accelerate.__version__) >= version.parse("0.16.0"):
         # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
+        #* 在保存模型状态之前执行，确保 EMA 模型和普通模型的权重都被正确保存
         def save_model_hook(models, weights, output_dir):
-            if args.use_ema:
+            if args.use_ema: #* 保存ema模型
+                #? save_pretrained(path): 生成两个文件，config.json-模型配置，pytorch_model.bin-模型权重
                 ema_unet.save_pretrained(os.path.join(output_dir, "unet_ema"))
 
-            for i, model in enumerate(models):
+            for i, model in enumerate(models): #! 保存普通模型
                 model.save_pretrained(os.path.join(output_dir, "unet"))
 
                 # make sure to pop weight so that corresponding model is not saved again
                 weights.pop()
 
+        #* 在加载模型状态之前执行，确保 EMA 模型和普通模型的权重都被正确加载
         def load_model_hook(models, input_dir):
             if args.use_ema:
                 load_model = EMAModel.from_pretrained(os.path.join(input_dir, "unet_ema"), UNet2DConditionModel)
@@ -502,14 +532,16 @@ def main():
                 model.load_state_dict(load_model.state_dict())
                 del load_model
 
+        #* 注册到accelerator对象上
         accelerator.register_save_state_pre_hook(save_model_hook)
-        accelerator.register_load_state_pre_hook(load_model_hook)
+        accelerator.register_load_state_pre_hook(load_model_hook) 
 
-    if args.gradient_checkpointing:
+    if args.gradient_checkpointing: #* 一种用于减少训练模型使用显存的技术
         unet.enable_gradient_checkpointing()
 
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
+    #* 根据配置参数启用 TF32 计算模式以加速训练，并根据训练配置动态调整学习率
     if args.allow_tf32:
         torch.backends.cuda.matmul.allow_tf32 = True
 
@@ -519,7 +551,7 @@ def main():
         )
 
     # Initialize the optimizer
-    if args.use_8bit_adam:
+    if args.use_8bit_adam: #* 根据选择是否使用8bit优化器
         try:
             import bitsandbytes as bnb
         except ImportError:
@@ -535,7 +567,7 @@ def main():
         unet.parameters(),
         lr=args.learning_rate,
         betas=(args.adam_beta1, args.adam_beta2),
-        weight_decay=args.adam_weight_decay,
+        weight_decay=args.adam_weight_decay, #* 权重衰减，防止过拟合
         eps=args.adam_epsilon,
     )
 
@@ -543,23 +575,28 @@ def main():
     print("*** load dataset: start")
     t0 = time.time()
     dataset = load_dataset("imagefolder", data_dir=args.train_data_dir, split="train")
+    #* Dataset({ 类名吧
+    #* features: ['image', 'text'],
+    #* num_rows: 10274
+    #* })
     print(f"*** load dataset: end --- {time.time()-t0} sec")
 
     # Preprocessing the datasets.
-    column_names = dataset.column_names
-    image_column = column_names[0]
-    caption_column = column_names[1]
+    column_names = dataset.column_names #* ['image', 'text']
+    image_column = column_names[0] #* 'iamge'
+    caption_column = column_names[1] #* 'text'
 
     # Preprocessing the datasets.
     # We need to tokenize input captions and transform the images.
+    #* 输入example，输出inputs的id
     def tokenize_captions(examples, is_train=True):
         captions = []
-        for caption in examples[caption_column]:
-            if isinstance(caption, str):
+        for caption in examples[caption_column]: #* 遍历所有的caption
+            if isinstance(caption, str): #* 如果是string，直接加到list里
                 captions.append(caption)
-            elif isinstance(caption, (list, np.ndarray)):
+            elif isinstance(caption, (list, np.ndarray)): #* 否则，随机选取一个
                 # take a random caption if there are multiple
-                captions.append(random.choice(caption) if is_train else caption[0])
+                captions.append(random.choice(caption) if is_train else caption[0]) #* 是训练数据随机选，否则选第一个
             else:
                 raise ValueError(
                     f"Caption column `{caption_column}` should contain either strings or lists of strings."
@@ -567,7 +604,7 @@ def main():
         inputs = tokenizer(
             captions, max_length=tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
         )
-        return inputs.input_ids
+        return inputs.input_ids #* 返回输入的id，是训练/推理时的输入
 
     # Preprocessing the datasets.
     train_transforms = transforms.Compose(
@@ -580,21 +617,25 @@ def main():
         ]
     )
 
-    def preprocess_train(examples):
-        images = [image.convert("RGB") for image in examples[image_column]]
-        examples["pixel_values"] = [train_transforms(image) for image in images]
-        examples["input_ids"] = tokenize_captions(examples)
+    def preprocess_train(examples): #? 训练的 预处理？
+        images = [image.convert("RGB") for image in examples[image_column]] #* 将图像转为RGB格式
+        examples["pixel_values"] = [train_transforms(image) for image in images] #* for image
+        examples["input_ids"] = tokenize_captions(examples) #* for text
         return examples
 
-    with accelerator.main_process_first():
+    with accelerator.main_process_first(): #* 确保数据预处理操作在主进程中首先完成，避免分布式训练中的重复操作
         if args.max_train_samples is not None:
+            #! 选择前mts个样本用于调试
             dataset = dataset.shuffle(seed=args.seed).select(range(args.max_train_samples))
         # Set the training transforms
-        train_dataset = dataset.with_transform(preprocess_train)
+        train_dataset = dataset.with_transform(preprocess_train) #* 将预处理函数 preprocess_train 应用于数据集
 
+    #* 将一批样本组合成一个批次，用于数据加载器
+    #! 后续ipdb调试一下看看
     def collate_fn(examples):
         pixel_values = torch.stack([example["pixel_values"] for example in examples])
-        pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
+        #* 将张量的内存格式设置为连续格式，以提高后续操作的效率; 同时转为float
+        pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float() 
         input_ids = torch.stack([example["input_ids"] for example in examples])
         return {"pixel_values": pixel_values, "input_ids": input_ids}
 
@@ -602,26 +643,29 @@ def main():
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         shuffle=True,
-        collate_fn=collate_fn,
+        collate_fn=collate_fn, #* 自定义的 collate 函数，用于将一批样本组合成一个 batch
         batch_size=args.train_batch_size,
-        num_workers=args.dataloader_num_workers,
+        num_workers=args.dataloader_num_workers, #* 用于数据加载的子进程数量
     )
 
     # Scheduler and math around the number of training steps.
-    overrode_max_train_steps = False
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
-    if args.max_train_steps is None:
+    overrode_max_train_steps = False #* 指示是否覆盖了最大训练步骤数，表明最大训练步骤数是用户手动设置的，还是根据其他参数自动计算得出的
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps) #* 每个epoch中的更新次数
+    if args.max_train_steps is None: #* 如果没有指定max training steps，那么在这里指定
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
 
     lr_scheduler = get_scheduler(
-        args.lr_scheduler,
+        args.lr_scheduler, #* 学习率调度器的类型，例如 "linear"、"cosine" 等
         optimizer=optimizer,
+        #* 预热步骤数，表示在训练初期逐步增加学习率的步骤数
         num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
+        #* 总训练步骤数
         num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
     )
 
     # Prepare everything with our `accelerator`.
+    #* accelerator.prepare(): 自动处理模型和数据在多个GPU上的分布和同步
     unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
         unet, optimizer, train_dataloader, lr_scheduler
     )
@@ -634,7 +678,7 @@ def main():
     weight_dtype = torch.float32
     if accelerator.mixed_precision == "fp16":
         weight_dtype = torch.float16
-    elif accelerator.mixed_precision == "bf16":
+    elif accelerator.mixed_precision == "bf16": #* 同样占用16位，但具有更大的动态范围，适用于更广泛的场景
         weight_dtype = torch.bfloat16
 
     # Move student's text_encode and vae and teacher's unet to gpu and cast to weight_dtype
@@ -655,6 +699,7 @@ def main():
         accelerator.init_trackers("text2image-fine-tune", config=vars(args))
 
     # Train!
+    #* 总批次大小: 每个设备上的batch size * 设备数 * 梯度累积
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
     logger.info("***** Running training *****")
@@ -669,6 +714,7 @@ def main():
 
     # Potentially load in the weights and states from a previous save
     if args.resume_from_checkpoint:
+        #* get checkpoint
         if args.resume_from_checkpoint != "latest":
             path = os.path.basename(args.resume_from_checkpoint)
         else:
@@ -678,6 +724,7 @@ def main():
             dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
             path = dirs[-1] if len(dirs) > 0 else None
 
+        #* 输出提示信息
         if path is None:
             accelerator.print(
                 f"Checkpoint '{args.resume_from_checkpoint}' does not exist. Starting a new training run."
@@ -697,9 +744,9 @@ def main():
     progress_bar.set_description("Steps")
 
     # Add hook for feature KD
-    acts_tea = {}
-    acts_stu = {}
-    if args.unet_config_name in ["bk_base", "bk_small"]:
+    acts_tea = {} #* 用于存储教师模型中间特征的字典
+    acts_stu = {} #* 用于存储学生模型中间特征的字典
+    if args.unet_config_name in ["bk_base", "bk_small"]: #? base和samll的映射位置是相同的
         mapping_layers = ['up_blocks.0', 'up_blocks.1', 'up_blocks.2', 'up_blocks.3',
                         'down_blocks.0', 'down_blocks.1', 'down_blocks.2', 'down_blocks.3']    
         mapping_layers_tea = copy.deepcopy(mapping_layers)
@@ -711,6 +758,7 @@ def main():
         mapping_layers_stu = ['down_blocks.0', 'down_blocks.1', 'down_blocks.2.attentions.0.proj_out',
                                 'up_blocks.0', 'up_blocks.1', 'up_blocks.2']  
 
+    #* 处理多gpu环境的mapping名称
     if torch.cuda.device_count() > 1:
         print(f"use multi-gpu: # gpus {torch.cuda.device_count()}")
         # revise the hooked feature names for student (to consider ddp wrapper)
@@ -739,19 +787,21 @@ def main():
                     progress_bar.update(1)
                 continue
 
-            with accelerator.accumulate(unet):
+            with accelerator.accumulate(unet): #* grad_accu在acc初始化的时候定义
                 # Convert images to latent space
+                #* .latent_dist.sample()：这一步从潜在分布中采样得到潜在表示
                 latents = vae.encode(batch["pixel_values"].to(weight_dtype)).latent_dist.sample()
                 latents = latents * vae.config.scaling_factor
 
                 # Sample noise that we'll add to the latents
                 noise = torch.randn_like(latents)
-                bsz = latents.shape[0]
+                bsz = latents.shape[0] #* batch size
                 # Sample a random timestep for each image
+                #* 生成bsz个0到x的整数
                 timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (bsz,), device=latents.device)
-                timesteps = timesteps.long()
+                timesteps = timesteps.long() #* 类型转换为long
 
-                # Add noise to the latents according to the noise magnitude at each timestep
+                # Add noise to the latents according to the noise magnitude at eachdc timestep
                 # (this is the forward diffusion process)
                 noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
@@ -776,8 +826,8 @@ def main():
 
                 # Predict feature-KD loss
                 losses_kd_feat = []
-                for (m_tea, m_stu) in zip(mapping_layers_tea, mapping_layers_stu):
-                    a_tea = acts_tea[m_tea]
+                for (m_tea, m_stu) in zip(mapping_layers_tea, mapping_layers_stu): 
+                    a_tea = acts_tea[m_tea] #* activation-激活值，这里是特征
                     a_stu = acts_stu[m_stu]
 
                     if type(a_tea) is tuple: a_tea = a_tea[0]                        
@@ -791,6 +841,7 @@ def main():
                 loss = args.lambda_sd * loss_sd + args.lambda_kd_output * loss_kd_output + args.lambda_kd_feat * loss_kd_feat
 
                 # Gather the losses across all processes for logging (if we use distributed training).
+                #* 这段代码的目的是在分布式训练环境中聚合和计算平均损失
                 avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
                 train_loss += avg_loss.item() / args.gradient_accumulation_steps
 
@@ -805,7 +856,7 @@ def main():
 
                 # Backpropagate
                 accelerator.backward(loss)
-                if accelerator.sync_gradients:
+                if accelerator.sync_gradients: #* 梯度裁剪
                     accelerator.clip_grad_norm_(unet.parameters(), args.max_grad_norm)
                 optimizer.step()
                 lr_scheduler.step()
@@ -852,7 +903,7 @@ def main():
                     "kd_output_loss": loss_kd_output.detach().item(),
                     "kd_feat_loss": loss_kd_feat.detach().item(),
                     "lr": lr_scheduler.get_last_lr()[0]}
-            progress_bar.set_postfix(**logs)
+            progress_bar.set_postfix(**logs) #* 通过 set_postfix 方法将 logs 字典中的信息添加到训练进度条的后缀中
 
             # save validation images
             if (args.valid_prompt is not None) and (step % args.valid_steps == 0) and accelerator.is_main_process:
@@ -868,8 +919,10 @@ def main():
                 )
                 pipeline = pipeline.to(accelerator.device)
                 pipeline.set_progress_bar_config(disable=True)
+                #* 创建一个随机种子生成器，用于确保生成图像的随机性
                 generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
 
+                #* 生成teacher image，只会执行一次
                 if not os.path.exists(os.path.join(val_img_dir, "teacher_0.png")):
                     for kk in range(args.num_valid_images):
                         image = pipeline(args.valid_prompt, num_inference_steps=25, generator=generator).images[0]
@@ -880,14 +933,15 @@ def main():
                 # mixed precision hooks while we are still training
                 pipeline.unet = accelerator.unwrap_model(unet, keep_fp32_wrapper=True).to(accelerator.device)
               
+                #* 生成student image，会按周期执行
                 for kk in range(args.num_valid_images):
                     image = pipeline(args.valid_prompt, num_inference_steps=25, generator=generator).images[0]
                     tmp_name = os.path.join(val_img_dir, f"gstep{global_step}_epoch{epoch}_step{step}_{kk}.png")
                     print(tmp_name)
                     image.save(tmp_name)
 
-                del pipeline
-                torch.cuda.empty_cache()
+                del pipeline #* 删除 pipeline 对象，释放内存。
+                torch.cuda.empty_cache() #* 清理未使用的 GPU 内存，防止内存溢出。
 
             if global_step >= args.max_train_steps:
                 break

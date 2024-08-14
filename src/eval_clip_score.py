@@ -13,7 +13,7 @@ from utils.misc import get_file_list_from_csv
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--save_txt", type=str, default="./results/bk-sdm-small/im256_clip.txt")
-    parser.add_argument("--data_list", type=str, default="./data/mscoco_val2014_30k/metadata.csv")   
+    parser.add_argument("--data_list", type=str, default="/home/wanghesong/Datasets/mscoco_val2014_30k/metadata.csv")   
     parser.add_argument("--img_dir", type=str, default="./results/bk-sdm-small/im256")  
     parser.add_argument('--device', type=str, default='cuda:0', help='Device to use, cuda:gpu_number or cpu')
     args = parser.parse_args()

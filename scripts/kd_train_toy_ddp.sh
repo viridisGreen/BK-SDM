@@ -10,14 +10,14 @@ UNET_CONFIG_PATH="./src/unet_config"
 UNET_NAME="bk_tiny" # option: ["bk_base", "bk_small", "bk_tiny"]
 OUTPUT_DIR="./results/toy_ddp_"$UNET_NAME # please adjust it if needed
 
-BATCH_SIZE=2
+BATCH_SIZE=64
 GRAD_ACCUMULATION=4
 
-NUM_GPUS=2
+NUM_GPUS=3
 
 StartTime=$(date +%s)
 
-CUDA_VISIBLE_DEVICES=1,2 accelerate launch --multi_gpu --num_processes ${NUM_GPUS} src/kd_train_text_to_image.py \
+CUDA_VISIBLE_DEVICES=4,5,6 accelerate launch --multi_gpu --num_processes ${NUM_GPUS} src/kd_train_text_to_image.py \
   --pretrained_model_name_or_path $MODEL_NAME \
   --train_data_dir $TRAIN_DATA_DIR\
   --use_ema \

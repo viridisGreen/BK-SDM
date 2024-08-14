@@ -3,6 +3,7 @@
 # ------------------------------------------------------------------------------------
 
 import os
+os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 import argparse
 import time
 from utils.inference_pipeline import InferencePipeline
@@ -14,14 +15,14 @@ def parse_args():
     parser.add_argument("--save_dir", type=str, default="./results/bk-sdm-small",
                         help="$save_dir/{im256, im512} are created for saving 256x256 and 512x512 images")
     parser.add_argument("--unet_path", type=str, default=None)   
-    parser.add_argument("--data_list", type=str, default="./data/mscoco_val2014_30k/metadata.csv")    
+    parser.add_argument("--data_list", type=str, default="/home/wanghesong/Datasets/mscoco_val2014_30k/metadata.csv")       
     parser.add_argument("--num_images", type=int, default=1)
     parser.add_argument("--num_inference_steps", type=int, default=25)
     parser.add_argument('--device', type=str, default='cuda:0', help='Device to use, cuda:gpu_number or cpu')
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--img_sz", type=int, default=512)
     parser.add_argument("--img_resz", type=int, default=256)
-    parser.add_argument("--batch_sz", type=int, default=1)
+    parser.add_argument("--batch_sz", type=int, default=8)
 
     args = parser.parse_args()
     return args
