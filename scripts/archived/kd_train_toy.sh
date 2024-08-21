@@ -3,26 +3,23 @@
 # Code modified from https://github.com/huggingface/diffusers/tree/v0.15.0/examples/text_to_image
 # ------------------------------------------------------------------------------------
 
-MODEL_NAME="stabilityai/stable-diffusion-2-1" # image size: 768x768
-# TRAIN_DATA_DIR="/home/wanghesong/Datasets/laion_aes/preprocessed_2256k" # please adjust it if needed
+MODEL_NAME="CompVis/stable-diffusion-v1-4"
 TRAIN_DATA_DIR="./data/laion_aes/preprocessed_11k" # please adjust it if needed
-UNET_CONFIG_PATH="./src/unet_config_v2"
+UNET_CONFIG_PATH="./src/unet_config"
 
-UNET_NAME="bk_base" # option: ["bk_base", "bk_small", "bk_tiny"]
-OUTPUT_DIR="./results/ddp_v2-base_kd_"$UNET_NAME # please adjust it if needed
+UNET_NAME="bk_small" # option: ["bk_base", "bk_small", "bk_tiny"]
+OUTPUT_DIR="./results/toy_"$UNET_NAME # please adjust it if needed
 
-BATCH_SIZE=32
+BATCH_SIZE=2
 GRAD_ACCUMULATION=4
-
-NUM_GPUS=4
 
 StartTime=$(date +%s)
 
-CUDA_VISIBLE_DEVICES=4,5,6,7 accelerate launch --multi_gpu --num_processes ${NUM_GPUS} src/kd_train_text_to_image.py \
-  --pretrained_model_name_or_path $MODEL_NAME \
+CUDA_VISIBLE_DEVICES=1 accelerate launch src/kd_train_text_to_image.py \
+  --pretrained_model_name_or_path "/home/wanghesong/.cache/huggingface/hub/models--CompVis--stable-diffusion-v1-4/snapshots/133a221b8aa7292a167afc5127cb63fb5005638b" \
   --train_data_dir $TRAIN_DATA_DIR\
   --use_ema \
-  --resolution 768 --center_crop --random_flip \
+  --resolution 512 --center_crop --random_flip \
   --train_batch_size $BATCH_SIZE \
   --gradient_checkpointing \
   --mixed_precision="fp16" \
@@ -30,11 +27,11 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 accelerate launch --multi_gpu --num_processes ${NUM
   --max_grad_norm 1 \
   --lr_scheduler="constant" --lr_warmup_steps=0 \
   --report_to="all" \
-  --max_train_steps=4000 \
+  --max_train_steps=20 \
   --seed 1234 \
   --gradient_accumulation_steps $GRAD_ACCUMULATION \
-  --checkpointing_steps 400 \
-  --valid_steps 400 \
+  --checkpointing_steps 5 \
+  --valid_steps 5 \
   --lambda_sd 1.0 --lambda_kd_output 1.0 --lambda_kd_feat 1.0 \
   --use_copy_weight_from_teacher \
   --unet_config_path $UNET_CONFIG_PATH --unet_config_name $UNET_NAME \
@@ -43,3 +40,4 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 accelerate launch --multi_gpu --num_processes ${NUM
 
 EndTime=$(date +%s)
 echo "** KD training takes $(($EndTime - $StartTime)) seconds."
+
