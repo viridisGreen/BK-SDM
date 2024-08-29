@@ -23,9 +23,9 @@ def parse_args():
     parser.add_argument("--save_dir", type=str, 
                         default="/home/wanghesong/Datasets/mscoco_val2014_30k")
     
-    parser.add_argument('--num_samples', type=int, default=6000,
+    parser.add_argument('--num_samples', type=int, default=4,
                         help='how many samples are selected')
-    parser.add_argument('--num_splits', type=int, default=4,
+    parser.add_argument('--num_splits', type=int, default=1,
                         help='how many samples are selected')
     
     args = parser.parse_args()
@@ -74,16 +74,49 @@ if __name__ == "__main__":
             writer.writerow(row)
     # endregion-devide captions
     
-    for s in range(args.num_splits):
-        log_dir = './outputs/ddp-gen/logs'
-        os.makedirs(log_dir, exist_ok=True)
-        os.system(f"nohup bash -c 'IMG_DIR=./outputs/ddp-gen && "
-                    f"python3 src/generate.py "
-                    f"--unet_path ./results/ddp_v2-base/checkpoint-5000 "
-                    f"--model_id stabilityai/stable-diffusion-2-1 "
-                    f"--save_dir ./outputs/ddp-gen --img_sz 768 "
-                    f"--data_list {args.save_dir}/subdata_{s+1:02}.csv "
-                    f"--device \"cuda:{s}\"' > ./outputs/ddp-gen/logs/nohup_{s+1:02}.out 2>&1 &")
+    # option = sys.argv[1]
+    # print(option)
+    for s in range(args.num_splits): 
+        if False: 
+            log_dir = './outputs/ddp-gen/logs'
+            os.makedirs(log_dir, exist_ok=True)
+            os.system(f"nohup bash -c 'IMG_DIR=./outputs/ddp-gen && "
+                        f"python3 src/generate.py "
+                        f"--unet_path ./results/ddp_v2-base/checkpoint-5000 "
+                        f"--model_id stabilityai/stable-diffusion-2-1 "
+                        f"--save_dir $IMG_DIR --img_sz 768 "
+                        f"--data_list {args.save_dir}/subdata_{s+1:02}.csv "
+                        f"--device \"cuda:{s}\"' > ./outputs/ddp-gen/logs/nohup_{s+1:02}.out 2>&1 &")
+        elif False: 
+            log_dir = './outputs/bksdm-v2-base-212k-ckpt_30k/logs'
+            os.makedirs(log_dir, exist_ok=True)
+            os.system(f"nohup bash -c 'IMG_DIR=./outputs/bksdm-v2-base-212k-ckpt_30k && "
+                        f"python3 src/generate.py "
+                        f"--unet_path ./results/bksdm-v2-base-212k/checkpoint-30000 "
+                        f"--model_id stabilityai/stable-diffusion-2-1 "
+                        f"--save_dir $IMG_DIR --img_sz 768 "
+                        f"--data_list {args.save_dir}/subdata_{s+1:02}.csv "
+                        f"--device \"cuda:{s}\"' > ./outputs/bksdm-v2-base-212k-ckpt_30k/logs/nohup_{s+1:02}.out 2>&1 &")
+        elif False: 
+            log_dir = './outputs/bksdm-v2-base-212k-ckpt_50k-3w/logs'
+            os.makedirs(log_dir, exist_ok=True)
+            os.system(f"nohup bash -c 'IMG_DIR=./outputs/bksdm-v2-base-212k-ckpt_50k-3w && "
+                        f"python3 src/generate.py "
+                        f"--unet_path nota-ai/bk-sdm-v2-base "
+                        f"--model_id nota-ai/bk-sdm-v2-base "
+                        f"--save_dir $IMG_DIR --img_sz 768 "
+                        f"--data_list {args.save_dir}/subdata_{s+1:02}.csv "
+                        f"--device \"cuda:{s}\"' > ./outputs/bksdm-v2-base-212k-ckpt_50k-3w/logs/nohup_{s+1:02}.out 2>&1 &")
+        else: 
+            log_dir = './outputs/4-imgs-test/logs'
+            os.makedirs(log_dir, exist_ok=True)
+            os.system(f"nohup bash -c 'IMG_DIR=./outputs/4-imgs-test && "
+                        f"python3 src/generate.py "
+                        f"--unet_path nota-ai/bk-sdm-v2-base "
+                        f"--model_id nota-ai/bk-sdm-v2-base "
+                        f"--save_dir $IMG_DIR --img_sz 768 "
+                        f"--data_list {args.save_dir}/subdata_{s+1:02}.csv "
+                        f"--device \"cuda:{s}\"' > ./outputs/4-imgs-test/logs/nohup_{s+1:02}.out 2>&1 &")         
 
     print("=======DONE=======")
     
