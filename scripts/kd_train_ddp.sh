@@ -35,7 +35,6 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 accelerate launch --multi_gpu --num_process
   --seed 1234 \
   --gradient_accumulation_steps $GRAD_ACCUMULATION \
   --checkpointing_steps 2500 \
-  --resume_from_checkpoint ./results/ddp_v2-base/checkpoint-5000 \ 
   --valid_steps 500 \
   --lambda_sd 1.0 --lambda_kd_output 1.0 --lambda_kd_feat 1.0 \
   --use_copy_weight_from_teacher \

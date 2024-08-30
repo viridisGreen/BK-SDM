@@ -378,7 +378,7 @@ def parse_args():
 
 def main():
     args = parse_args()
-    logger = Logger(args, overwrite_print=True) 
+    # logger = Logger(args, overwrite_print=True) 
 
     #* 处理过时的配置
     if args.non_ema_revision is not None:
