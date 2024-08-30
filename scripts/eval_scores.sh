@@ -6,8 +6,8 @@
 #   for CLIP score, https://github.com/mlfoundations/open_clip
 # ------------------------------------------------------------------------------------
 
-GPU_NUM=1
-MODEL_ID=bksdm-v2-base-212k-ckpt_50k
+GPU_NUM=0
+MODEL_ID=bksdm-v2-base-212k-ckpt_50k-3w
 
 IMG_PATH=./outputs/$MODEL_ID/im256
 

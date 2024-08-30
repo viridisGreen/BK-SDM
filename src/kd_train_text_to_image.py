@@ -58,6 +58,8 @@ import csv
 import time
 import copy
 
+from smilelogging import Logger  # ==> Add this line
+
 # try to import wandb
 try:
     import wandb
@@ -134,6 +136,7 @@ def copy_weight_from_teacher(unet_stu, unet_tea, student_type):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Simple example of a training script.")
+    # from smilelogging import argparser as parser  #* ==> Replace above with this line
     parser.add_argument(
         "--pretrained_model_name_or_path",
         type=str,
@@ -374,9 +377,8 @@ def parse_args():
 # endregion-out_of_main
 
 def main():
-    import ipdb
-    # ipdb.set_trace()
     args = parse_args()
+    logger = Logger(args, overwrite_print=True) 
 
     #* 处理过时的配置
     if args.non_ema_revision is not None:
