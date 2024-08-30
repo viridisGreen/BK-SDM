@@ -16,6 +16,9 @@ GRAD_ACCUMULATION=2
 
 NUM_GPUS=4
 
+# Add this line to specify the checkpoint to resume from
+CHECKPOINT_PATH="./results/test_run/checkpoint-5"  # Replace this with your actual checkpoint path
+
 StartTime=$(date +%s)
 
 CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch --multi_gpu --num_processes ${NUM_GPUS} src/kd_train_text_to_image.py \
@@ -38,7 +41,8 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch --multi_gpu --num_processes ${NUM
   --lambda_sd 1.0 --lambda_kd_output 1.0 --lambda_kd_feat 1.0 \
   --use_copy_weight_from_teacher \
   --unet_config_path $UNET_CONFIG_PATH --unet_config_name $UNET_NAME \
-  --output_dir $OUTPUT_DIR
+  --output_dir $OUTPUT_DIR \
+  --resume_from_checkpoint $CHECKPOINT_PATH 
 
 
 EndTime=$(date +%s)
