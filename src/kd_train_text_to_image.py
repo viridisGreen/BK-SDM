@@ -118,7 +118,6 @@ def copy_weight_from_teacher(unet_stu, unet_tea, student_type):
     else:
         raise NotImplementedError
 
-
     for k in unet_stu.state_dict().keys(): #* 变量模型所有参数（的key）, .state_dict(): 返回模型的状态字典，包含了模型所有参数的名称和值
         flag = 0 #* 标志变量，用于指示当前键是否需要强制复制
         k_orig = k #* 初始的键名，用于在需要时替换前缀
@@ -382,7 +381,7 @@ def main():
     args = parse_args()
     # logger = Logger(args, overwrite_print=True) 
 
-    #* 处理过时的配置
+    #* 处理过时的配置, 根本不执行
     if args.non_ema_revision is not None:
         deprecate(
             "non_ema_revision!=None", #* condition: 表达弃用条件的字符串
@@ -392,27 +391,25 @@ def main():
                 " use `--variant=non_ema` instead."
             ),
         )
-    logging_dir = os.path.join(args.output_dir, args.logging_dir)
-
+    logging_dir = os.path.join(args.output_dir, args.logging_dir)  #* ./results/xx; logs, 好像并不存在
+    st()
     #* 创建一个ProjCfg类，设置最大ckpt数量，多了会删除最前的
     #* 与Accelerator配合使用：在后续代码中，这个配置对象将传递给 Accelerator，用于管理训练过程中的检查点保存和删除
     accelerator_project_config = ProjectConfiguration(total_limit=args.checkpoints_total_limit)
 
     accelerator = Accelerator( #* Acc类：提供了简化和加速分布式训练和混合精度训练的功能
         gradient_accumulation_steps=args.gradient_accumulation_steps,
-        mixed_precision=args.mixed_precision,
-        log_with=args.report_to,
+        mixed_precision=args.mixed_precision,  #* fp16: 计算权重更新用fp32，其他用fp16
+        log_with=args.report_to,  #* 'all': 日志输出到哪个平台，e.g. wandb, tensorboard, etc.
         logging_dir=logging_dir,
         project_config=accelerator_project_config,
     )
 
     # Add custom csv logger and validation image folder
-    val_img_dir = os.path.join(args.output_dir, 'val_img')
+    val_img_dir = os.path.join(args.output_dir, 'val_img')  #* './results/xx/val_img'
     os.makedirs(val_img_dir, exist_ok=True)
 
-
-    csv_log_path = os.path.join(args.output_dir, 'log_loss.csv')
-    # print(csv_log_path)
+    csv_log_path = os.path.join(args.output_dir, 'log_loss.csv')  #* './results/xx/log_loss.csv'
     if not os.path.exists(csv_log_path): #* 如果是第一次创建，写入表头
         with open(csv_log_path, 'w') as logfile:
             logwriter = csv.writer(logfile, delimiter=',')
@@ -421,10 +418,10 @@ def main():
                                 'lr', 'lamb_sd', 'lamb_kd_output', 'lamb_kd_feat'])
 
     # Make one log on every process with the configuration for debugging.
-    logging.basicConfig(
+    logging.basicConfig(  #* 配置日志输出的format（日志系统的基本设置
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
-        level=logging.INFO,
+        level=logging.INFO,  #* 只记录INFO级别及以上
     )
     logger.info(accelerator.state, main_process_only=False) #* 记录有关分布式训练的信息
     #* 根据当前进程是否为本地主进程（local main process），设置不同库的日志详细程度
@@ -439,7 +436,7 @@ def main():
 
     # If passed along, set the training seed now.
     if args.seed is not None:
-        set_seed(args.seed)
+        set_seed(args.seed)  #* 一键设置 Python、NumPy 和 PyTorch 的随机数种子
 
     # Handle the repository creation
     #* 在分布式训练环境中，仅在主进程中创建输出目录; 避免多个进程同时创建同一目录，导致冲突或冗余操作
@@ -447,7 +444,8 @@ def main():
         os.makedirs(args.output_dir, exist_ok=True)
 
     # Load scheduler, tokenizer and models.
-    #* 加载模型预设好的部分，revision是指定模型的版本或修订版
+    #* 加载模型预设好的部分，revision是指定模型的版本或修订版，这里revision = None
+    #* revision可以是版本，分支，commit id
     noise_scheduler = DDPMScheduler.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="scheduler"
     )
@@ -463,10 +461,10 @@ def main():
 
     # Define teacher and student
     unet_teacher = UNet2DConditionModel.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="unet", revision=args.non_ema_revision
+        args.pretrained_model_name_or_path, subfolder="unet", revision=args.non_ema_revision  #* None
     )
 
-    #* load_config(path): 把配置文件保存到path里面
+    #* load_config(path-文件夹，subfolder-子文件夹-可以没有): 把配置文件保存到path里面
     config_student = UNet2DConditionModel.load_config(args.unet_config_path, subfolder=args.unet_config_name)
     #* 根据配置创建一个 UNet2DConditionModel 模型实例
     unet = UNet2DConditionModel.from_config(config_student, revision=args.non_ema_revision)
@@ -483,9 +481,10 @@ def main():
 
     # Create EMA for the unet.
     if args.use_ema:
-        #* 和前面的unet相同，除了revision
+        #* 和前面的unet相同，除了revision（revision也是None，先不用管了
         ema_unet = UNet2DConditionModel.from_config(config_student, revision=args.revision) 
         #* 将unet模型包装到EMAModel中，并指定模型的类和配置
+        #** 作用：将普通的unet模型变为一个带有ema机制的模型
         ema_unet = EMAModel(ema_unet.parameters(), model_cls=UNet2DConditionModel, model_config=ema_unet.config)
 
     #* 如果可以的话，使用xFormer加速运算
