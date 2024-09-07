@@ -38,7 +38,8 @@ CUDA_VISIBLE_DEVICES=1 accelerate launch src/kd_train_text_to_image.py \
   --lambda_sd 1.0 --lambda_kd_output 1.0 --lambda_kd_feat 1.0 \
   --use_copy_weight_from_teacher \
   --unet_config_path $UNET_CONFIG_PATH --unet_config_name $UNET_NAME \
-  --output_dir $OUTPUT_DIR
+  --output_dir $OUTPUT_DIR \
+  --enable_xformers_memory_efficient_attention
 
 
 EndTime=$(date +%s)

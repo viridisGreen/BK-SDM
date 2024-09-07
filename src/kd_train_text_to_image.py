@@ -392,7 +392,7 @@ def main():
             ),
         )
     logging_dir = os.path.join(args.output_dir, args.logging_dir)  #* ./results/xx; logs, 好像并不存在
-    st()
+
     #* 创建一个ProjCfg类，设置最大ckpt数量，多了会删除最前的
     #* 与Accelerator配合使用：在后续代码中，这个配置对象将传递给 Accelerator，用于管理训练过程中的检查点保存和删除
     accelerator_project_config = ProjectConfiguration(total_limit=args.checkpoints_total_limit)
@@ -488,10 +488,12 @@ def main():
         ema_unet = EMAModel(ema_unet.parameters(), model_cls=UNet2DConditionModel, model_config=ema_unet.config)
 
     #* 如果可以的话，使用xFormer加速运算
-    if args.enable_xformers_memory_efficient_attention:
+    #** xFormers 是一个库，专注于优化Transformer中的注意力计算，更加内存和计算高效（这个库挺大的
+    if args.enable_xformers_memory_efficient_attention:  #* 这里默认是False, 没有使用
         if is_xformers_available():
             import xformers
 
+            #* version.parser(): 用于将版本号字符串解析成一个可以进行比较的对象
             xformers_version = version.parse(xformers.__version__)
             if xformers_version == version.parse("0.0.16"):
                 logger.warn(
@@ -507,10 +509,10 @@ def main():
         #* 在保存模型状态之前执行，确保 EMA 模型和普通模型的权重都被正确保存
         def save_model_hook(models, weights, output_dir):
             if args.use_ema: #* 保存ema模型
-                #? save_pretrained(path): 生成两个文件，config.json-模型配置，pytorch_model.bin-模型权重
+                #* save_pretrained(path): 生成两个文件，config.json-模型配置，pytorch_model.bin-模型权重
                 ema_unet.save_pretrained(os.path.join(output_dir, "unet_ema"))
 
-            for i, model in enumerate(models): #! 保存普通模型
+            for i, model in enumerate(models): #! 保存普通模型, 目前不太清楚是怎么运作的
                 model.save_pretrained(os.path.join(output_dir, "unet"))
 
                 # make sure to pop weight so that corresponding model is not saved again
@@ -524,37 +526,40 @@ def main():
                 ema_unet.to(accelerator.device)
                 del load_model
 
-            for i in range(len(models)):
+            for i in range(len(models)):  #! 暂时也不太清楚是怎么运作的
                 # pop models so that they are not loaded again
                 model = models.pop()
 
                 # load diffusers style into model
+                #* register_to_config(): 用于将特定的模型属性注册到模型的配置中, 确保模型的配置与当前实例的属性保持一致
+                #* load_state_dict(): 用于将加载的权重应用到当前模型上
                 load_model = UNet2DConditionModel.from_pretrained(input_dir, subfolder="unet")
                 model.register_to_config(**load_model.config)
-
                 model.load_state_dict(load_model.state_dict())
                 del load_model
 
         #* 注册到accelerator对象上
-        accelerator.register_save_state_pre_hook(save_model_hook)
-        accelerator.register_load_state_pre_hook(load_model_hook) 
+        accelerator.register_save_state_pre_hook(save_model_hook)  #* 调用accelerator.save_state()时，首先执行这个hook
+        accelerator.register_load_state_pre_hook(load_model_hook)  #* 调用accelerator.load_state()时，首先执行这个hook
 
-    if args.gradient_checkpointing: #* 一种用于减少训练模型使用显存的技术
+    if args.gradient_checkpointing: #* 一种用于减少训练模型使用显存的技术, 默认为True
+        #** 减少显存占用，增加计算时间 & 开销
         unet.enable_gradient_checkpointing()
 
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
-    #* 根据配置参数启用 TF32 计算模式以加速训练，并根据训练配置动态调整学习率
-    if args.allow_tf32:
+    #* 根据配置参数启用 Tensor-Float 32 计算模式以加速训练，并根据训练配置动态调整学习率
+    #** 比FP32快，但精度更低
+    if args.allow_tf32:  #* 默认为False
         torch.backends.cuda.matmul.allow_tf32 = True
 
-    if args.scale_lr:
+    if args.scale_lr: #* 是否scale学习率以适应多卡训练，默认为Flase
         args.learning_rate = (
             args.learning_rate * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
         )
 
     # Initialize the optimizer
-    if args.use_8bit_adam: #* 根据选择是否使用8bit优化器
+    if args.use_8bit_adam: #* 根据选择是否使用8bit优化器, 默认为False
         try:
             import bitsandbytes as bnb
         except ImportError:
@@ -564,26 +569,24 @@ def main():
 
         optimizer_cls = bnb.optim.AdamW8bit
     else:
-        optimizer_cls = torch.optim.AdamW
+        optimizer_cls = torch.optim.AdamW  #* 默认优化器
 
     optimizer = optimizer_cls(
         unet.parameters(),
         lr=args.learning_rate,
-        betas=(args.adam_beta1, args.adam_beta2),
-        weight_decay=args.adam_weight_decay, #* 权重衰减，防止过拟合
-        eps=args.adam_epsilon,
+        betas=(args.adam_beta1, args.adam_beta2),  #* Adam优化器的两个超参数，用来控制一阶和二阶动量的计算
+        weight_decay=args.adam_weight_decay, #* 权重衰减，用于防止过拟合: 更新权重时对权重施加衰减(L2正则化), 减少权重的大小
+        eps=args.adam_epsilon,  #* 避免分母为0
     )
 
     # Get the datasets. As the amount of data grows, the time taken by load_dataset also increases.
     print("*** load dataset: start")
     t0 = time.time()
     dataset = load_dataset("imagefolder", data_dir=args.train_data_dir, split="train")
-    #* Dataset({ 类名吧
-    #* features: ['image', 'text'],
-    #* num_rows: 10274
-    #* })
+    #*返回值:    #* Dataset({ features: ['image', 'text'],
+                #*           num_rows: 10274 })
     print(f"*** load dataset: end --- {time.time()-t0} sec")
-
+    st()
     # Preprocessing the datasets.
     column_names = dataset.column_names #* ['image', 'text']
     image_column = column_names[0] #* 'iamge'
