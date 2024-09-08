@@ -83,8 +83,11 @@ def get_activation(mem, name):
     return get_output_hook
 
 def add_hook(net, mem, mapping_layers):
+    #* named_modules(): 返回模型中所有子模块，按层遍历
+    #* n 是子模块的名称（如 'up_blocks.0'、'down_blocks.1'），m是实际的对象
     for n, m in net.named_modules():
         if n in mapping_layers:
+            #* register_forward_hook()： pytorch中的方法
             m.register_forward_hook(get_activation(mem, n))
 
 #todo 返回继承了参数但未经过剪枝的学生模型
@@ -595,21 +598,25 @@ def main():
     # Preprocessing the datasets.
     # We need to tokenize input captions and transform the images.
     #* 输入example，输出inputs的id
-    def tokenize_captions(examples, is_train=True):  #! 尚不清楚运行机制，以后调试一下
+    #** 把一个batch的caption提取出来，然后用tokenizer处理，返回
+    def tokenize_captions(examples, is_train=True):  
         captions = []
         for caption in examples[caption_column]: #* 遍历所有的caption
-            if isinstance(caption, str): #* 如果是string，直接加到list里
+            if isinstance(caption, str): #* 单个caption
                 captions.append(caption)
-            elif isinstance(caption, (list, np.ndarray)): #* 否则，随机选取一个
+            elif isinstance(caption, (list, np.ndarray)): #* 多个caption随机选取一个
                 # take a random caption if there are multiple
-                captions.append(random.choice(caption) if is_train else caption[0]) #* 是训练数据随机选，否则选第一个
+                #* 如果在训练随机选一个，否则选第一个
+                captions.append(random.choice(caption) if is_train else caption[0]) 
             else:
                 raise ValueError(
                     f"Caption column `{caption_column}` should contain either strings or lists of strings."
                 )
+            #* captions: [bsz, ]
         inputs = tokenizer(
             captions, max_length=tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
         )
+        #* inputs是个字典, dict_keys(['input_ids', 'attention_mask'])
         return inputs.input_ids #* 返回输入的id，是训练/推理时的输入
 
     # Preprocessing the datasets.
@@ -623,31 +630,34 @@ def main():
         ]
     )
 
-    def preprocess_train(examples):  #! 训练的 预处理？也不清楚，日后调试
+    def preprocess_train(examples):  
+        #* 会在数据加载的时候被调用，to be specific, enumerate(train_dataloader)的时候
+        #* 每次处理一个batch的数据
         images = [image.convert("RGB") for image in examples[image_column]] #* 将图像转为RGB格式
         examples["pixel_values"] = [train_transforms(image) for image in images] #* for image
         examples["input_ids"] = tokenize_captions(examples) #* for text
-        return examples
+        return examples  #* 字典: dict_keys(['image', 'text', 'pixel_values', 'input_ids'])
 
     with accelerator.main_process_first(): #* 确保数据预处理操作在主进程中首先完成，避免分布式训练中的重复操作
         if args.max_train_samples is not None:  #* 默认是None
-            #! 选择前mts个样本用于调试
+            #!* 选择前max_train_samples个样本用于调试
             dataset = dataset.shuffle(seed=args.seed).select(range(args.max_train_samples))
-        # Set the training transforms #*在数据加载时，数据集中的每个样本都会被传递到preprocess_train函数中进行预处理
+        # Set the training transforms #* 在数据加载时，数据集中的每个样本都会被传递到preprocess_train函数中进行预处理
         train_dataset = dataset.with_transform(preprocess_train)  #* with_trans会返回一个新的对象
 
-    #* 将一批样本组合成一个批次，用于数据加载器
-    #! 后续ipdb调试一下看看
     def collate_fn(examples):
-        pixel_values = torch.stack([example["pixel_values"] for example in examples])
+        #* 将多个样本合成一个批次并返回, 在这里去掉了没有用的两个keys
+        #* 由于是dataloader用的，所以也是按批次处理
+        #* examples：[2, ], 内含两个4-key字典
+        pixel_values = torch.stack([example["pixel_values"] for example in examples])  #* [bsz, 3, 768, 768]
         #* 将张量的内存格式设置为连续格式，以提高后续操作的效率; 同时转为float
         pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float() 
-        input_ids = torch.stack([example["input_ids"] for example in examples])
+        input_ids = torch.stack([example["input_ids"] for example in examples])  #* [bsz, 77(tokenizer.model_max_length)]
         return {"pixel_values": pixel_values, "input_ids": input_ids}
 
     # DataLoaders creation:
     train_dataloader = torch.utils.data.DataLoader(
-        train_dataset,
+        train_dataset, #* 包含了 .with_transform(preprocess_train)
         shuffle=True,
         collate_fn=collate_fn, #* 自定义的 collate 函数，用于将一批样本组合成一个 batch
         batch_size=args.train_batch_size,
@@ -668,10 +678,10 @@ def main():
         #* 定义了在训练的初期有多少步会逐步增加学习率，直到达到设定的最大学习率
         num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
         #* 总训练步骤数
-        #! 初步来看，nts对应前向传播的次数，mts对应反向传播的次数（i.e. 模型更新次数
+        #** 初步来看，nts对应前向传播的次数，mts对应反向传播的次数（i.e. 模型更新次数
         num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
     )
-    st()
+    
     # Prepare everything with our `accelerator`.
     #* accelerator.prepare(): 自动处理模型和数据在多个GPU上的分布和同步
     unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
@@ -755,7 +765,8 @@ def main():
     # Add hook for feature KD
     acts_tea = {} #* 用于存储教师模型中间特征的字典
     acts_stu = {} #* 用于存储学生模型中间特征的字典
-    if args.unet_config_name in ["bk_base", "bk_small"]: #? base和samll的映射位置是相同的
+    if args.unet_config_name in ["bk_base", "bk_small"]: 
+        #* 会被用来提取特征的层
         mapping_layers = ['up_blocks.0', 'up_blocks.1', 'up_blocks.2', 'up_blocks.3',
                         'down_blocks.0', 'down_blocks.1', 'down_blocks.2', 'down_blocks.3']    
         mapping_layers_tea = copy.deepcopy(mapping_layers)
@@ -771,10 +782,11 @@ def main():
     if torch.cuda.device_count() > 1:
         print(f"use multi-gpu: # gpus {torch.cuda.device_count()}")
         # revise the hooked feature names for student (to consider ddp wrapper)
+        #* 多gpu训练的情况下，子模块会被包裹在一个叫module的外层模块中
         for i, m_stu in enumerate(mapping_layers_stu):
             mapping_layers_stu[i] = 'module.'+m_stu
 
-    add_hook(unet_teacher, acts_tea, mapping_layers_tea)
+    add_hook(unet_teacher, acts_tea, mapping_layers_tea) #! 这两行没有特别看懂
     add_hook(unet, acts_stu, mapping_layers_stu)
 
     # get wandb_tracker (if it exists)
@@ -790,6 +802,9 @@ def main():
         train_loss_kd_feat = 0.0
 
         for step, batch in enumerate(train_dataloader):
+            #* batch.keys() = dict_keys(['pixel_values', 'input_ids'])
+            #* batch['pixel_values'].shape = [bsz, 3, 768, 768]
+            #* batch['input_ids'].shape = [bsz, 77], 77是tokenizer.model_max_length，超参
             # Skip steps until we reach the resumed step
             if args.resume_from_checkpoint and epoch == first_epoch and step < resume_step:
                 if step % args.gradient_accumulation_steps == 0:
