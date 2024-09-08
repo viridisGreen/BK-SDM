@@ -586,7 +586,7 @@ def main():
     #*返回值:    #* Dataset({ features: ['image', 'text'],
                 #*           num_rows: 10274 })
     print(f"*** load dataset: end --- {time.time()-t0} sec")
-    st()
+    
     # Preprocessing the datasets.
     column_names = dataset.column_names #* ['image', 'text']
     image_column = column_names[0] #* 'iamge'
@@ -595,7 +595,7 @@ def main():
     # Preprocessing the datasets.
     # We need to tokenize input captions and transform the images.
     #* 输入example，输出inputs的id
-    def tokenize_captions(examples, is_train=True):
+    def tokenize_captions(examples, is_train=True):  #! 尚不清楚运行机制，以后调试一下
         captions = []
         for caption in examples[caption_column]: #* 遍历所有的caption
             if isinstance(caption, str): #* 如果是string，直接加到list里
@@ -623,18 +623,18 @@ def main():
         ]
     )
 
-    def preprocess_train(examples): #? 训练的 预处理？
+    def preprocess_train(examples):  #! 训练的 预处理？也不清楚，日后调试
         images = [image.convert("RGB") for image in examples[image_column]] #* 将图像转为RGB格式
         examples["pixel_values"] = [train_transforms(image) for image in images] #* for image
         examples["input_ids"] = tokenize_captions(examples) #* for text
         return examples
 
     with accelerator.main_process_first(): #* 确保数据预处理操作在主进程中首先完成，避免分布式训练中的重复操作
-        if args.max_train_samples is not None:
+        if args.max_train_samples is not None:  #* 默认是None
             #! 选择前mts个样本用于调试
             dataset = dataset.shuffle(seed=args.seed).select(range(args.max_train_samples))
-        # Set the training transforms
-        train_dataset = dataset.with_transform(preprocess_train) #* 将预处理函数 preprocess_train 应用于数据集
+        # Set the training transforms #*在数据加载时，数据集中的每个样本都会被传递到preprocess_train函数中进行预处理
+        train_dataset = dataset.with_transform(preprocess_train)  #* with_trans会返回一个新的对象
 
     #* 将一批样本组合成一个批次，用于数据加载器
     #! 后续ipdb调试一下看看
@@ -656,20 +656,22 @@ def main():
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False #* 指示是否覆盖了最大训练步骤数，表明最大训练步骤数是用户手动设置的，还是根据其他参数自动计算得出的
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps) #* 每个epoch中的更新次数
+    #? len(dataloader) = len(dataset) / args.batch_size, 也就是批次数量
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps) #* 每个epoch中的模型更新的次数
     if args.max_train_steps is None: #* 如果没有指定max training steps，那么在这里指定
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
 
-    lr_scheduler = get_scheduler(
+    lr_scheduler = get_scheduler(  #* HF的内置函数
         args.lr_scheduler, #* 学习率调度器的类型，例如 "linear"、"cosine" 等
         optimizer=optimizer,
-        #* 预热步骤数，表示在训练初期逐步增加学习率的步骤数
+        #* 定义了在训练的初期有多少步会逐步增加学习率，直到达到设定的最大学习率
         num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
         #* 总训练步骤数
+        #! 初步来看，nts对应前向传播的次数，mts对应反向传播的次数（i.e. 模型更新次数
         num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
     )
-
+    st()
     # Prepare everything with our `accelerator`.
     #* accelerator.prepare(): 自动处理模型和数据在多个GPU上的分布和同步
     unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
@@ -677,7 +679,7 @@ def main():
     )
 
     if args.use_ema:
-        ema_unet.to(accelerator.device)
+        ema_unet.to(accelerator.device)  #* 只追踪模型的变化，创建一个平滑版的模型，不直接参与forward和backward
 
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
     # as these models are only used for inference, keeping weights in full precision is not required.
@@ -693,16 +695,17 @@ def main():
     unet_teacher.to(accelerator.device, dtype=weight_dtype)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
-    if overrode_max_train_steps:
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)  #* 反向传播的次数
+    #* 一个是用epoch推training step，一个是用step推epoch，最终训练要用epoch来实现
+    if overrode_max_train_steps:  #* epoch -> step
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
-    # Afterwards we recalculate our number of training epochs
-    args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
+    # Afterwards we recalculate our number of training epochs  #* step -> epoch
+    args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)  
 
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
-    if accelerator.is_main_process:
-        accelerator.init_trackers("text2image-fine-tune", config=vars(args))
+    if accelerator.is_main_process:  #* tracker通常会与外部工具集成，如：wandb, etc.
+        accelerator.init_trackers("text2image-fine-tune", config=vars(args))  #* vars: 将args转换成字典形式
 
     # Train!
     #* 总批次大小: 每个设备上的batch size * 设备数 * 梯度累积
@@ -719,7 +722,7 @@ def main():
     first_epoch = 0
 
     # Potentially load in the weights and states from a previous save
-    if args.resume_from_checkpoint:
+    if args.resume_from_checkpoint:  #! 没有细看过
         #* get checkpoint
         if args.resume_from_checkpoint != "latest":
             path = os.path.basename(args.resume_from_checkpoint)
