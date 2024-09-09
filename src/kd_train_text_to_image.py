@@ -80,6 +80,7 @@ import warnings
 warnings.filterwarnings("ignore", message="torch.utils.checkpoint: the use_reentrant parameter should be passed explicitly.")
 
 def get_activation(mem, name):
+    #* 实际的hook函数, unet forward的时候被执行
     def get_output_hook(module, input, output):
         mem[name] = output
 
@@ -88,14 +89,15 @@ def get_activation(mem, name):
 def add_hook(net, mem, mapping_layers):
     #* named_modules(): 返回模型中所有子模块，按层遍历
     #* n 是子模块的名称（如 'up_blocks.0'、'down_blocks.1'），m是实际的对象
+    #* 给mapping_layers中的每一个层都增加一个hook函数, 用于获取feature
     for n, m in net.named_modules():
         if n in mapping_layers:
-            #* register_forward_hook()： pytorch中的方法
+            #* register_forward_hook(): 
+            #* pytorch中的方法, 每次forward经过这个层时, get_activation()会捕获输出并保存mem中
             m.register_forward_hook(get_activation(mem, n))
 
 #todo 返回继承了参数但未经过剪枝的学生模型
 def copy_weight_from_teacher(unet_stu, unet_tea, student_type):
-
     #* 首先定义一个字典，用于存储stu和tea之间的映射关系
     connect_info = {} # connect_info['TO-student'] = 'FROM-teacher'
     if student_type in ["bk_base", "bk_small"]:
@@ -814,7 +816,6 @@ def main():
             #* batch['pixel_values'].shape = [bsz, 3, 768, 768]
             #* batch['input_ids'].shape = [bsz, 77], 77是tokenizer.model_max_length，超参
             # Skip steps until we reach the resumed step
-            st()
             if args.resume_from_checkpoint and epoch == first_epoch and step < resume_step:
                 if step % args.gradient_accumulation_steps == 0:
                     progress_bar.update(1)  #* 更新进度条，表示完成一次模型更新（反向传播
@@ -867,6 +868,7 @@ def main():
                 # Predict feature-KD loss
                 losses_kd_feat = []  #* 用于存储每层的蒸馏损失
                 for (m_tea, m_stu) in zip(mapping_layers_tea, mapping_layers_stu): 
+                    #* acts_tea&stu 是在forward的时候, 由hook函数捕获的
                     a_tea = acts_tea[m_tea] #* activation-激活值，这里是特征
                     a_stu = acts_stu[m_stu] #* acts_tea&stu都是dict, 长度为8
 
