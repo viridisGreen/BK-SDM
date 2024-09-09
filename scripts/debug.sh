@@ -13,7 +13,7 @@ UNET_CONFIG_PATH="./src/unet_config_v2"
 UNET_NAME="bk_base" # option: ["bk_base", "bk_small", "bk_tiny"]
 OUTPUT_DIR="./results/debug_run" # please adjust it if needed
 
-BATCH_SIZE=2
+BATCH_SIZE=3
 GRAD_ACCUMULATION=2
 
 StartTime=$(date +%s)

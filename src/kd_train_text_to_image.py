@@ -76,6 +76,9 @@ check_min_version("0.15.0")
 
 logger = get_logger(__name__, log_level="INFO")
 
+import warnings
+warnings.filterwarnings("ignore", message="torch.utils.checkpoint: the use_reentrant parameter should be passed explicitly.")
+
 def get_activation(mem, name):
     def get_output_hook(module, input, output):
         mem[name] = output
@@ -511,11 +514,15 @@ def main():
         # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
         #* 在保存模型状态之前执行，确保 EMA 模型和普通模型的权重都被正确保存
         def save_model_hook(models, weights, output_dir):
+            #* 用来保存ckpt的, 目录是.results/xx/checkpoint-xx
+            #* models: 一个长度为1的list，唯一的元素是 diffusers.models.unet_2d_condition.UNet2DConditionModel
+            #* weights: 长度为1的list，唯一的元素是 collections.OrderedDict —— 字典，存了权重
+            #* 出去之后是 accelerator.save_state(save_path)
             if args.use_ema: #* 保存ema模型
                 #* save_pretrained(path): 生成两个文件，config.json-模型配置，pytorch_model.bin-模型权重
                 ema_unet.save_pretrained(os.path.join(output_dir, "unet_ema"))
 
-            for i, model in enumerate(models): #! 保存普通模型, 目前不太清楚是怎么运作的
+            for i, model in enumerate(models): #* models  只有一个，循环也只执行一次
                 model.save_pretrained(os.path.join(output_dir, "unet"))
 
                 # make sure to pop weight so that corresponding model is not saved again
@@ -523,6 +530,7 @@ def main():
 
         #* 在加载模型状态之前执行，确保 EMA 模型和普通模型的权重都被正确加载
         def load_model_hook(models, input_dir):
+            #* 应该是只有在断点续训的时候才会用到
             if args.use_ema:
                 load_model = EMAModel.from_pretrained(os.path.join(input_dir, "unet_ema"), UNet2DConditionModel)
                 ema_unet.load_state_dict(load_model.state_dict())
@@ -806,57 +814,66 @@ def main():
             #* batch['pixel_values'].shape = [bsz, 3, 768, 768]
             #* batch['input_ids'].shape = [bsz, 77], 77是tokenizer.model_max_length，超参
             # Skip steps until we reach the resumed step
+            st()
             if args.resume_from_checkpoint and epoch == first_epoch and step < resume_step:
                 if step % args.gradient_accumulation_steps == 0:
-                    progress_bar.update(1)
+                    progress_bar.update(1)  #* 更新进度条，表示完成一次模型更新（反向传播
                 continue
 
             with accelerator.accumulate(unet): #* grad_accu在acc初始化的时候定义
                 # Convert images to latent space
+                #* vae不直接输出确定的潜在表示, 而是输出潜在分布的参数(均值,标准差), 从这个分布中采样得到潜在表示
+                #* vae.encode(input)输出一个带有 latent_dist 属性的对象，包含 mean 和 logvar
                 #* .latent_dist.sample()：这一步从潜在分布中采样得到潜在表示
-                latents = vae.encode(batch["pixel_values"].to(weight_dtype)).latent_dist.sample()
-                latents = latents * vae.config.scaling_factor
+                latents = vae.encode(batch["pixel_values"].to(weight_dtype)).latent_dist.sample()  #* [bsz, 4, 96, 96]
+                latents = latents * vae.config.scaling_factor  #* 对latents进行一下缩放, [bsz, 4, 96, 96]
 
                 # Sample noise that we'll add to the latents
-                noise = torch.randn_like(latents)
+                noise = torch.randn_like(latents)  #* [bsz, 4, 96, 96]
                 bsz = latents.shape[0] #* batch size
-                # Sample a random timestep for each image
-                #* 生成bsz个0到x的整数
-                timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (bsz,), device=latents.device)
-                timesteps = timesteps.long() #* 类型转换为long
+                # Sample a random timestep for each image  #* 为每个图像生成一个随机时间步
+                timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (bsz,), device=latents.device)  #* [bsz, ]
+                timesteps = timesteps.long() #* 类型转换为long, [bsz, ]
 
                 # Add noise to the latents according to the noise magnitude at eachdc timestep
                 # (this is the forward diffusion process)
-                noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+                #* add_noise()根据timesteps将noise按照不同程度增加到latents中
+                noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)  #* [bsz, 4, 96, 96]
 
                 # Get the text embedding for conditioning
-                encoder_hidden_states = text_encoder(batch["input_ids"])[0]
+                #* batch["input_ids"]可以简单理解为文本经过处理后转换成的数字表示形式
+                #* text_encoder输出一个类似元组的东西，(last_hidden_state, pooler_output)
+                #* 其中, 0就是text_embedding, 1是对整个输入序列的全局表示 (暂时不需要知道是什么意思)
+                encoder_hidden_states = text_encoder(batch["input_ids"])[0]  #* [bsz, 77, 1024], 就是text_embedding
 
                 # Get the target for loss depending on the prediction type
-                if noise_scheduler.config.prediction_type == "epsilon":
+                if noise_scheduler.config.prediction_type == "epsilon":  #* False
                     target = noise
-                elif noise_scheduler.config.prediction_type == "v_prediction":
-                    target = noise_scheduler.get_velocity(latents, noise, timesteps)
+                elif noise_scheduler.config.prediction_type == "v_prediction":  #* True
+                    target = noise_scheduler.get_velocity(latents, noise, timesteps)  #* [bsz, 4, 96, 96]
                 else:
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
 
                 # Predict the noise residual and compute loss
-                model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
-                loss_sd = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                #* unet的输出是类似字典的东西, 只有一个key, 是'sample'
+                model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample  #* [bsz, 4, 96, 96]
+                #* reduction控制对所有值([bsz])进行的操作, mean, sum, etc.
+                loss_sd = F.mse_loss(model_pred.float(), target.float(), reduction="mean")  #* 就一个数
 
                 # Predict output-KD loss
-                model_pred_teacher = unet_teacher(noisy_latents, timesteps, encoder_hidden_states).sample
+                model_pred_teacher = unet_teacher(noisy_latents, timesteps, encoder_hidden_states).sample  #* [bsz, 4, 96, 96]
                 loss_kd_output = F.mse_loss(model_pred.float(), model_pred_teacher.float(), reduction="mean")
 
                 # Predict feature-KD loss
-                losses_kd_feat = []
+                losses_kd_feat = []  #* 用于存储每层的蒸馏损失
                 for (m_tea, m_stu) in zip(mapping_layers_tea, mapping_layers_stu): 
                     a_tea = acts_tea[m_tea] #* activation-激活值，这里是特征
-                    a_stu = acts_stu[m_stu]
+                    a_stu = acts_stu[m_stu] #* acts_tea&stu都是dict, 长度为8
 
                     if type(a_tea) is tuple: a_tea = a_tea[0]                        
                     if type(a_stu) is tuple: a_stu = a_stu[0]
 
+                    #* stu需要训练, 而tea不需要, 所以不tea detache()
                     tmp = F.mse_loss(a_stu.float(), a_tea.detach().float(), reduction="mean")
                     losses_kd_feat.append(tmp)
                 loss_kd_feat = sum(losses_kd_feat)
