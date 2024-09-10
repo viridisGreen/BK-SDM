@@ -77,6 +77,9 @@ check_min_version("0.15.0")
 logger = get_logger(__name__, log_level="INFO")
 
 import warnings
+warnings.filterwarnings("ignore")
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message="torch.utils.checkpoint: the use_reentrant parameter should be passed explicitly.")
 warnings.filterwarnings("ignore", message="None of the inputs have requires_grad=True. Gradients will be None")
 warnings.filterwarnings("ignore", message="torch.cuda.amp.autocast(args...) is deprecated")
@@ -98,8 +101,8 @@ def add_hook(net, mem, mapping_layers):
             #* pytorch中的方法, 每次forward经过这个层时, get_activation()会捕获输出并保存mem中
             m.register_forward_hook(get_activation(mem, n))
 
-#todo 返回继承了参数但未经过剪枝的学生模型
 def copy_weight_from_teacher(unet_stu, unet_tea, student_type):
+    #todo 返回继承了参数但未经过剪枝的学生模型
     #* 首先定义一个字典，用于存储stu和tea之间的映射关系
     connect_info = {} # connect_info['TO-student'] = 'FROM-teacher'
     if student_type in ["bk_base", "bk_small"]:
