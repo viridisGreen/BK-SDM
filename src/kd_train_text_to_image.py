@@ -78,6 +78,8 @@ logger = get_logger(__name__, log_level="INFO")
 
 import warnings
 warnings.filterwarnings("ignore", message="torch.utils.checkpoint: the use_reentrant parameter should be passed explicitly.")
+warnings.filterwarnings("ignore", message="None of the inputs have requires_grad=True. Gradients will be None")
+warnings.filterwarnings("ignore", message="torch.cuda.amp.autocast(args...) is deprecated")
 
 def get_activation(mem, name):
     #* 实际的hook函数, unet forward的时候被执行
@@ -884,7 +886,11 @@ def main():
                 loss = args.lambda_sd * loss_sd + args.lambda_kd_output * loss_kd_output + args.lambda_kd_feat * loss_kd_feat
 
                 # Gather the losses across all processes for logging (if we use distributed training).
-                #* 这段代码的目的是在分布式训练环境中聚合和计算平均损失
+                #* 注意是为了logging \
+                #* 这段代码的目的是在分布式训练环境中聚合和计算平均损失, 以确保损失的准确性和一致性
+                #* accelerator.gather(): 将不同进程上的张量进行收集和汇总; 将每个进程上的loss张量收集到一个大张量中
+                #* loss.repeat(bsz): 将当前的loss张量复制bzs份, gather期望处理bsz大小的张量, [1] -> [bsz]
+                #* .item(): 将张量转换为对应的python标量
                 avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
                 train_loss += avg_loss.item() / args.gradient_accumulation_steps
 
@@ -899,25 +905,26 @@ def main():
 
                 # Backpropagate
                 accelerator.backward(loss)
-                if accelerator.sync_gradients: #* 梯度裁剪
+                #* 确保在多 GPU 或分布式训练中, 只有在所有进程都同步了梯度后, 才会进行梯度裁剪, 单卡默认是False
+                if accelerator.sync_gradients:  #* 梯度裁剪, 设置一个最大范数, 防止梯度爆炸
                     accelerator.clip_grad_norm_(unet.parameters(), args.max_grad_norm)
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
 
             # Checks if the accelerator has performed an optimization step behind the scenes
-            if accelerator.sync_gradients:
+            if accelerator.sync_gradients:  #* 单卡默认是False
                 if args.use_ema:
-                    ema_unet.step(unet.parameters())
-                progress_bar.update(1)
+                    ema_unet.step(unet.parameters())  #* 更新ema模型参数
+                progress_bar.update(1)  #* 更新进度条
                 global_step += 1
-                accelerator.log(
+                accelerator.log(  #* 与wandb进行交互, 不会直接在命令行输出
                     {
                         "train_loss": train_loss, 
                         "train_loss_sd": train_loss_sd,
                         "train_loss_kd_output": train_loss_kd_output,
                         "train_loss_kd_feat": train_loss_kd_feat,
-                        "lr": lr_scheduler.get_last_lr()[0]
+                        "lr": lr_scheduler.get_last_lr()[0]  #* [x] -> x
                     }, 
                     step=global_step
                 )
@@ -946,34 +953,41 @@ def main():
                     "kd_output_loss": loss_kd_output.detach().item(),
                     "kd_feat_loss": loss_kd_feat.detach().item(),
                     "lr": lr_scheduler.get_last_lr()[0]}
+            #* 更新进度条后缀, 将logs作为进度条后缀显示出来
             progress_bar.set_postfix(**logs) #* 通过 set_postfix 方法将 logs 字典中的信息添加到训练进度条的后缀中
 
             # save validation images
             if (args.valid_prompt is not None) and (step % args.valid_steps == 0) and accelerator.is_main_process:
-                logger.info(
+                logger.info(  #* 会输出到命令行
                     f"Running validation... \n Generating {args.num_valid_images} images with prompt:"
                     f" {args.valid_prompt}."
                 )
                 # create pipeline
+                #* 注意, 这里的pipeline就是我们的teacher model, 而不是我们自己训练的模型
                 pipeline = StableDiffusionPipeline.from_pretrained(
                     args.pretrained_model_name_or_path,
                     safety_checker=None,
                     revision=args.revision,
                 )
                 pipeline = pipeline.to(accelerator.device)
-                pipeline.set_progress_bar_config(disable=True)
-                #* 创建一个随机种子生成器，用于确保生成图像的随机性
+                pipeline.set_progress_bar_config(disable=True)  #* 生成过程中禁用进度条
+                #* 创建一个随机数生成器，用于确保生成图像的随机性
                 generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
 
                 #* 生成teacher image，只会执行一次
                 if not os.path.exists(os.path.join(val_img_dir, "teacher_0.png")):
                     for kk in range(args.num_valid_images):
+                        #* pipeline返回值: 
+                        #* 1.images, 一个len()为1的list; 
+                        #* 2.nsfw_content_detected: 标志是否被检测为不宜内容, 仅在启用safety_checker时有效
                         image = pipeline(args.valid_prompt, num_inference_steps=25, generator=generator).images[0]
                         tmp_name = os.path.join(val_img_dir, f"teacher_{kk}.png")
                         image.save(tmp_name)
 
                 # set `keep_fp32_wrapper` to True because we do not want to remove
                 # mixed precision hooks while we are still training
+                #* 将pipeline的unet替换为我们自己训练的unet
+                #* accelerator>unwrap_model(): 将模型从accelerator的包装中解包出来, 并保留fp32的相关处理
                 pipeline.unet = accelerator.unwrap_model(unet, keep_fp32_wrapper=True).to(accelerator.device)
               
                 #* 生成student image，会按周期执行
@@ -986,15 +1000,17 @@ def main():
                 del pipeline #* 删除 pipeline 对象，释放内存。
                 torch.cuda.empty_cache() #* 清理未使用的 GPU 内存，防止内存溢出。
 
+            #* 无论如何训练的iter数量不会超过args.max_train_steps
             if global_step >= args.max_train_steps:
                 break
 
     # Create the pipeline using the trained modules and save it.
-    accelerator.wait_for_everyone()
+    accelerator.wait_for_everyone()  #* 在分布式训练中同步所有进程, 等待所有设备达到相同进度
     if accelerator.is_main_process:
-        unet = accelerator.unwrap_model(unet)
+        unet = accelerator.unwrap_model(unet)  #* 把unet从accelerator的包装中解包出来
         if args.use_ema:
-            ema_unet.copy_to(unet.parameters())
+            #* copy_to(): 一种用于将模型参数从一个模型复制到另一个模型的机制
+            ema_unet.copy_to(unet.parameters())  #* 将ema模型的权重复制到unet中
 
         pipeline = StableDiffusionPipeline.from_pretrained(
             args.pretrained_model_name_or_path,
@@ -1005,6 +1021,7 @@ def main():
         )
         pipeline.save_pretrained(args.output_dir)
 
+    #* 正确关闭或清理在训练过程中启动的资源或进程，确保整个训练过程以干净的方式结束，尤其是在分布式训练的场景下
     accelerator.end_training()
 
 if __name__ == "__main__":
