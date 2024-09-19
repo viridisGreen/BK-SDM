@@ -5,7 +5,8 @@
 
 MODEL_NAME="stabilityai/stable-diffusion-2-1" # image size: 768x768
 MODEL_PATH="/home/wanghesong/.cache/huggingface/hub/models--stabilityai--stable-diffusion-2-1/snapshots/5cae40e6a2745ae2b01ad92ae5043f95f23644d6"
-TRAIN_DATA_DIR="../../Datasets/laion_aes/preprocessed_11k" # please adjust it if needed
+# TRAIN_DATA_DIR="../../Datasets/laion_aes/preprocessed_11k" # please adjust it if needed
+TRAIN_DATA_DIR="/home/wanghesong/Datasets/laion_aes/train_v3/" # please adjust it if needed
 # TRAIN_DATA_DIR="../../Datasets/laion_aes/preprocessed_212k" # please adjust it if needed
 # TRAIN_DATA_DIR="../../Datasets/laion_aes/preprocessed_2256k" # please adjust it if needed
 UNET_CONFIG_PATH="./src/unet_config_v2"
@@ -18,7 +19,7 @@ GRAD_ACCUMULATION=2
 
 StartTime=$(date +%s)
 
-CUDA_VISIBLE_DEVICES=1 accelerate launch src/kd_train_text_to_image.py \
+CUDA_VISIBLE_DEVICES=0 accelerate launch src/kd_train_text_to_image.py \
   --pretrained_model_name_or_path $MODEL_PATH \
   --train_data_dir $TRAIN_DATA_DIR\
   --use_ema \

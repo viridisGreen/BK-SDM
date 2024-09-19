@@ -600,7 +600,9 @@ def main():
     # Get the datasets. As the amount of data grows, the time taken by load_dataset also increases.
     print("*** load dataset: start")
     t0 = time.time()
-    dataset = load_dataset("imagefolder", data_dir=args.train_data_dir, split="train")
+    # dataset = load_dataset("imagefolder", data_dir=args.train_data_dir, split="train")
+    # dataset = load_dataset(args.train_data_dir, split="train")
+    dataset = load_dataset("csv", data_files=args.train_data_dir+'/captions.csv', split="train")
     #*返回值:    #* Dataset({ features: ['image', 'text'],
                 #*           num_rows: 10274 })
     print(f"*** load dataset: end --- {time.time()-t0} sec")
